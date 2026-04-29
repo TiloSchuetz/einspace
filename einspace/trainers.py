@@ -90,7 +90,7 @@ class Trainer:
         self.patience = config["patience"]
         self.hpo_runs = config["hpo_runs"]
 
-        if self.config["dataset"] == "fsd50k":
+        if self.config["dataset"] == "fsd50k" or self.valid_dataloader is None: # crashes during testing otherwise, if check for None is not done
             self.val_score_at_init = 0
         else:
             self.val_score_at_init = self.evaluate(self.model, "val")

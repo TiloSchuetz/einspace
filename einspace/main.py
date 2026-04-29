@@ -196,4 +196,4 @@ if __name__ == "__main__":
     )
     best = trainer.train()
     # report best performance
-    print(f"Best accuracy: {best.accuracy} at epoch {best.epoch}")
+    print(f"Best accuracy: {best['val_score']} at epoch {best['epoch']}") # who coded that? access of dict was wrong
