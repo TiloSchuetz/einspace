@@ -44,6 +44,7 @@ unseen_datasets = [
     "isabella",
     "geoclassing",
     "chesseract",
+    "cifar-10",
 ]
 
 

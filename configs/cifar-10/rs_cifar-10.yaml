@@ -1,0 +1,42 @@
+# Description: Configuration file for the Random Mutation Search strategy on the CIFAR-10 dataset.
+seed: 42
+
+dataset: "cifar-10"
+load_in_gpu: True # if True, pre-loads entire dataset into GPU
+num_classes: 10 # num. of output classes
+channels: 3 # color channels of images
+image_size: # H, W of images
+  - 32
+  - 32
+input_mode: "im" # input mode 2D: im & 1D = seq
+train_mode: # train for training and val for validation
+  - "train"
+  - "val"
+
+score: "xe" # loss function to train on. Cross-entropy in this case
+epochs: 2 # number of epochs each candidate is trained during the search
+patience: 2 # when to do early stopping
+test_epochs: 4 # number of epochs during retraining
+batch_size: 32 # training batch size
+hpo_runs: 1 # how many hpo runs per architecture
+lr: 0.04
+momentum: 0.9
+weight_decay: 0.0003
+
+# defines search space
+search_space_computation_module_prob: 0.32 # probability of choosing a computation node
+# module is defined as a composition of functions from above that takes one input tensor and produces one output tensor, with potential branching inside
+search_space_min_module_depth: 0 # min depth of recursion tree. I think it has to be zero
+search_space_max_module_depth: 3 # max depth of recursion tree
+search_space_num_repeated_cells: 1 # if == 1 there will only be one module
+
+# defines search algorithm
+search_strategy: "rs" # defines the strategy of the search algorithm rs: Random Search/Sampling; rm: random mutation; re: regularised evolution
+# random mutation and regularised evolution are essentially the same, but random mutation doesn't update the population
+search_strategy_num_samples: 5 # rs: # of random architectures to evaluate; rm/re: # of mutations
+search_strategy_init_pop_size: 5 # number of architectures in population at the beginning
+search_strategy_sample_size: 10 # how many architectures to pick when choosing the best to mutate. larger = more selective; smaller = more exploratory
+search_strategy_architecture_seed: None # Base architecture that can be modified. Not relevant for rs
+search_strategy_continue_search: True # resumes to previous search checkpoint, if one exists
+
+log: True # writes detailed log during the run
