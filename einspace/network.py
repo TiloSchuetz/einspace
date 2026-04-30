@@ -20,7 +20,21 @@ class Network(nn.Module):
             # positional embedding?
             nn.Identity()
         )
-        if len(backbone_output_shape) == 2:
+        if config.get("score") == "triplet":
+            embedding_dim = output_shape  # num_classes in config = embedding dim
+            if len(backbone_output_shape) == 2: # [batch, features]
+                self.head = nn.Linear(backbone_output_shape[1], embedding_dim)
+            elif len(backbone_output_shape) == 3: # [batch, sequence, features]
+                self.head = nn.Sequential(
+                    Reduce("b s d -> b s", "mean"),
+                    nn.Linear(backbone_output_shape[1], embedding_dim),
+                )
+            elif len(backbone_output_shape) == 4: # [batch, channels, height, width]
+                self.head = nn.Sequential(
+                    Reduce("b c h w -> b c", "mean"),
+                    nn.Linear(backbone_output_shape[1], embedding_dim),
+                )
+        elif len(backbone_output_shape) == 2:
             self.head = nn.Sequential(
                 nn.Linear(backbone_output_shape[1], output_shape),
             )

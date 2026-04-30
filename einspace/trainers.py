@@ -69,6 +69,7 @@ class Trainer:
             "cosmic": CosmicBCEWithLogitsLoss(),
             "ecg": nn.CrossEntropyLoss(),
             "deepsea": nn.BCEWithLogitsLoss(),
+            "triplet": nn.TripletMarginWithDistanceLoss(distance_function=lambda x, y: 1 - nn.CosineSimilarity()(x, y)),
         }[self.score]
         self.score_fn = {
             "xe": lambda x, y: accuracy_score(x, y) * 100.0,
@@ -86,6 +87,7 @@ class Trainer:
             "cosmic": lambda x, y: CosmicMetricFunction(use_ignore=False)(x, y),
             "ecg": f1_score_ecg,
             "deepsea": calculate_auroc,
+            "triplet": lambda x, y: 0.0,  # placeholder, never actually called
         }[self.score]
         self.patience = config["patience"]
         self.hpo_runs = config["hpo_runs"]
@@ -174,28 +176,41 @@ class Trainer:
                 model.train()
                 labels, predictions = [], []
                 try:
-                    for data, target in self.train_dataloader:
-                        if not self.config["load_in_gpu"]:
-                            data, target = data.to(self.device), target.to(
-                                self.device
-                            )
-                        optimizer.zero_grad()
-                        output = model(data)
-
-                        # store labels and predictions to compute accuracy
-                        if self.score == "xe":
-                            labels += target.cpu().tolist()
-                            predictions += torch.argmax(
-                                output.detach().cpu(), 1
-                            ).tolist()
-                        elif self.score == "multi_hot":
-                            labels += logits_to_preds(target.cpu(), self.score)[0]
-                            predictions += logits_to_preds(output.cpu(), self.score)[0]
+                    for batch in self.train_dataloader: # particle dataloader requires other training loop
+                        if self.score == "triplet":
+                            anchor, positive, negative, gap, max_gap = batch
+                            if not self.config["load_in_gpu"]:
+                                anchor = anchor.to(self.device)
+                                positive = positive.to(self.device)
+                                negative = negative.to(self.device)
+                            optimizer.zero_grad()
+                            emb_anchor = model(anchor)
+                            emb_positive = model(positive)
+                            emb_negative = model(negative)
+                            loss = self.criterion(emb_anchor, emb_positive, emb_negative)
                         else:
-                            labels += target.cpu().tolist()
-                            predictions += output.detach().cpu().tolist()
+                            data, target = batch
+                            if not self.config["load_in_gpu"]:
+                                data, target = data.to(self.device), target.to(
+                                    self.device
+                                )
+                            optimizer.zero_grad()
+                            output = model(data)
 
-                        loss = self.criterion(output, target)
+                            # store labels and predictions to compute accuracy
+                            if self.score == "xe":
+                                labels += target.cpu().tolist()
+                                predictions += torch.argmax(
+                                    output.detach().cpu(), 1
+                                ).tolist()
+                            elif self.score == "multi_hot":
+                                labels += logits_to_preds(target.cpu(), self.score)[0]
+                                predictions += logits_to_preds(output.cpu(), self.score)[0]
+                            else:
+                                labels += target.cpu().tolist()
+                                predictions += output.detach().cpu().tolist()
+
+                            loss = self.criterion(output, target)
                         if torch.isnan(loss):
                             raise ValueError("Training loss became nan")
                         loss.backward()
@@ -203,7 +218,9 @@ class Trainer:
                     scheduler.step()
 
                     valid_score = 0.
-                    if self.valid_dataloader is not None:
+                    if self.score == "triplet":
+                        valid_score = loss.item() #TODO decide which evaluation strategy to use
+                    elif self.valid_dataloader is not None:
                         # fsd50k evaluation is super slow. Only do it at the end
                         if self.config["dataset"] == "fsd50k":
                             if epoch == self.epochs:
@@ -256,6 +273,29 @@ class Trainer:
 
     # print out the model's accuracy over the valid dataset
     def evaluate(self, model, split="val"):
+        if self.score == "triplet":
+            dataloaders = {
+                "train": self.train_dataloader,
+                "val": self.valid_dataloader,
+                "test": self.test_dataloader,
+            }
+            dataloader = dataloaders[split]
+            if dataloader is None:
+                return 0.0
+            model.to(self.device)
+            model.eval()
+            total_loss = 0.0
+            count = 0
+            with torch.no_grad():
+                for anchor, positive, negative, gap, max_gap in dataloader:
+                    anchor = anchor.to(self.device)
+                    positive = positive.to(self.device)
+                    negative = negative.to(self.device)
+                    loss = self.criterion(model(anchor), model(positive), model(negative))
+                    total_loss += loss.item()
+                    count += 1
+            return total_loss / max(count, 1)
+        
         if self.config["dataset"] == "fsd50k":
             print("Evaluating fsd50k")
             return self.evaluate_fsd50k(model, split)

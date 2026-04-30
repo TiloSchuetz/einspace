@@ -12,6 +12,13 @@ from torchvision import datasets, transforms
 
 from einspace.utils import millify
 
+import re
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from PIL import Image
+from pathlib import Path
+import random
+ImageSize = Union[int, Tuple[int, int]]
+
 
 # --------------------------------------------------------
 # NASBench360 imports
@@ -47,6 +54,300 @@ unseen_datasets = [
     "cifar-10",
 ]
 
+# particle tracking dataset
+
+class ParticlePatchPairDataset(Dataset):
+    """
+    Triplet samples for particle re-identification from patch folders produced by
+    ``create_particle_patch_dataset``:
+
+        association_root / split / video_XXXXXX / particle_YYYYYY / frame_*_ann_*.png
+
+    Each ``(video_*, particle_*)`` directory is one particle identity. Each sample
+    returns an anchor patch, a positive from the **same** identity (different
+    frame), and a negative from **another** identity. Filenames are parsed for
+    ``frame_<image_id>_ann_<id>.png`` to measure temporal gap.
+
+    Sampling constraints:
+        Only anchor-positive pairs with ``min_gap <= gap <= max_gap`` are sampled.
+        Valid index pairs are **not** stored (that can require tens of GiB); each
+        ``__getitem__`` draws a random eligible ``(i, j)`` by rejection sampling with
+        a deterministic fallback scan.
+
+    Cache:
+        Track metadata is cached at
+        ``association_root/particle_patch_pair_cache_<split>.torch``.
+        Set ``force_rebuild_cache=True`` to ignore and rebuild this cache.
+
+    For each particle track, the largest observed frame gap is stored in
+    ``max_gap_by_track[(video_id, particle_id)]``. The global maximum over all
+    tracks remains available via ``max_gap``.
+
+    Returns:
+        anchor (Tensor): ``C×H×W``
+        positive (Tensor): same
+        negative (Tensor): same
+        gap_frames (int): absolute frame distance between anchor and positive
+        gap_max (int): maximum observed anchor-positive frame gap for that track
+    """
+
+    _FRAME_RE = re.compile(r"frame_(\d+)_ann_(\d+)\.png$", re.IGNORECASE)
+    _CACHE_VERSION = 1
+
+    def __init__(
+        self,
+        association_root: str,
+        split: str,
+        length: int = 65536,
+        image_size: ImageSize = 32,
+        min_gap: int = 1,
+        max_gap: float = float("inf"),
+        force_rebuild_cache: bool = False,
+        transform: Optional[Callable] = None,
+    ):
+        self.root = Path(association_root)
+        self.split = split
+        self.split_dir = self.root / split
+        if not self.split_dir.is_dir():
+            raise FileNotFoundError(f"Association split not found: {self.split_dir}")
+
+        if isinstance(image_size, int):
+            size_hw = (image_size, image_size)
+        else:
+            size_hw = (int(image_size[0]), int(image_size[1]))
+
+        if transform is None:
+            from torchvision import transforms
+
+            self.transform = transforms.Compose(
+                [transforms.Resize(size_hw), transforms.ToTensor()]
+            )
+        else:
+            self.transform = transform
+
+        self.length = int(length)
+        self.min_gap = int(min_gap)
+        self.allowed_max_gap = float(max_gap)
+        self.force_rebuild_cache = bool(force_rebuild_cache)
+        if self.min_gap < 1:
+            raise ValueError(f"min_gap must be >= 1, got {self.min_gap}")
+        if self.allowed_max_gap < float(self.min_gap):
+            raise ValueError(
+                f"max_gap must be >= min_gap ({self.min_gap}), got {self.allowed_max_gap}"
+            )
+
+        self._tracks: List[Dict[str, Any]] = []
+        self.max_gap_observed = 1
+        self.max_gap_by_track: Dict[Tuple[int, int], int] = {}
+
+        cache_path = self.root / f"particle_patch_pair_cache_{self.split}.torch"
+        raw_tracks = self._load_or_build_track_cache(
+            cache_path, force_rebuild=self.force_rebuild_cache
+        )
+
+        for track in raw_tracks:
+            video_id = int(track["video_id"])
+            particle_id = int(track["particle_id"])
+            frame_ids = [int(x) for x in track["frames"]]
+            max_local = int(track["max_gap"])
+            if max_local > self.max_gap_observed:
+                self.max_gap_observed = max_local
+            self.max_gap_by_track[(video_id, particle_id)] = max_local
+
+            if not self._track_has_valid_positive_pair(frame_ids):
+                continue
+
+            self._tracks.append(
+                {
+                    "paths": [self.split_dir / rel for rel in track["paths_rel"]],
+                    "frames": frame_ids,
+                    "video_id": video_id,
+                    "particle_id": particle_id,
+                    "max_gap": max_local,
+                }
+            )
+
+        if not self._tracks:
+            raise RuntimeError(
+                f"No tracks with valid positive pairs under {self.split_dir} "
+                f"for min_gap={self.min_gap}, max_gap={self.allowed_max_gap}"
+            )
+        if len(self._tracks) < 2:
+            raise RuntimeError(
+                f"Need at least two distinct particle tracks (with 2+ patches each) "
+                f"under {self.split_dir}; found only one."
+            )
+
+        self.max_gap_observed = max(self.max_gap_observed, 1)
+
+    @property
+    def num_tracks(self) -> int:
+        return len(self._tracks)
+
+    @property
+    def max_gap(self) -> int:
+        """Backward-compatible alias for the observed global maximum track gap."""
+        return self.max_gap_observed
+
+    @classmethod
+    def _parse_frame_id(cls, path: Path) -> int:
+        m = cls._FRAME_RE.search(path.name)
+        if m is None:
+            return 0
+        return int(m.group(1))
+
+    def __len__(self) -> int:
+        return self.length
+
+    def _track_has_valid_positive_pair(self, frame_ids: List[int]) -> bool:
+        """Whether any patch pair (i < j) satisfies ``min_gap <= |Δframe| <= max_gap``."""
+        n = len(frame_ids)
+        for i in range(n):
+            fi = frame_ids[i]
+            for j in range(i + 1, n):
+                g = abs(fi - frame_ids[j])
+                if self.min_gap <= g <= self.allowed_max_gap:
+                    return True
+        return False
+
+    def _scan_first_valid_pair(self, frame_ids: List[int]) -> Tuple[int, int, int]:
+        """First (i, j, gap) with i < j in gap range; used if rejection sampling fails."""
+        n = len(frame_ids)
+        for i in range(n):
+            fi = frame_ids[i]
+            for j in range(i + 1, n):
+                g = abs(fi - frame_ids[j])
+                if self.min_gap <= g <= self.allowed_max_gap:
+                    return i, j, g
+        raise RuntimeError(
+            "internal: track has no valid positive pair despite init filter; "
+            f"frames={n}"
+        )
+
+    def _sample_positive_indices(self, track: Dict[str, Any]) -> Tuple[int, int, int]:
+        """Random (i, j, gap) with i < j and gap in ``[min_gap, max_gap]``."""
+        frames: List[int] = track["frames"]
+        n = len(frames)
+        if n < 2:
+            raise RuntimeError("internal: track needs at least two frames")
+        max_tries = max(512, n * n)
+        for _ in range(max_tries):
+            i = random.randrange(n)
+            j = random.randrange(n)
+            if i == j:
+                continue
+            if i > j:
+                i, j = j, i
+            g = abs(frames[i] - frames[j])
+            if self.min_gap <= g <= self.allowed_max_gap:
+                return i, j, g
+        return self._scan_first_valid_pair(frames)
+
+    def _load_or_build_track_cache(
+        self, cache_path: Path, force_rebuild: bool = False
+    ) -> List[Dict[str, Any]]:
+        if cache_path.is_file() and not force_rebuild:
+            try:
+                cached = torch.load(cache_path, map_location="cpu", weights_only=False)
+                if (
+                    isinstance(cached, dict)
+                    and cached.get("version") == self._CACHE_VERSION
+                    and cached.get("split") == self.split
+                    and isinstance(cached.get("tracks"), list)
+                ):
+                    return cached["tracks"]
+            except Exception:
+                pass
+
+        tracks = self._build_track_index()
+        payload = {
+            "version": self._CACHE_VERSION,
+            "split": self.split,
+            "tracks": tracks,
+        }
+        try:
+            torch.save(payload, cache_path)
+        except Exception:
+            # Caching is optional; dataset construction should still proceed.
+            pass
+        return tracks
+
+    def _build_track_index(self) -> List[Dict[str, Any]]:
+        tracks: List[Dict[str, Any]] = []
+        for video_dir in sorted(self.split_dir.glob("video_*")):
+            vparts = video_dir.name.split("_")
+            if len(vparts) < 2:
+                continue
+            try:
+                video_id = int(vparts[1])
+            except ValueError:
+                continue
+
+            for particle_dir in sorted(video_dir.glob("particle_*")):
+                pparts = particle_dir.name.split("_")
+                if len(pparts) < 2:
+                    continue
+                try:
+                    particle_id = int(pparts[1])
+                except ValueError:
+                    continue
+
+                pngs = sorted(particle_dir.glob("*.png"))
+                if len(pngs) < 2:
+                    continue
+
+                frame_ids = [self._parse_frame_id(p) for p in pngs]
+                max_local = 1
+                for i in range(len(frame_ids)):
+                    for j in range(i + 1, len(frame_ids)):
+                        g = abs(frame_ids[i] - frame_ids[j])
+                        if g > max_local:
+                            max_local = g
+
+                paths_rel = [
+                    str(path.relative_to(self.split_dir)).replace("\\", "/")
+                    for path in pngs
+                ]
+                tracks.append(
+                    {
+                        "video_id": video_id,
+                        "particle_id": particle_id,
+                        "frames": frame_ids,
+                        "max_gap": max_local,
+                        "paths_rel": paths_rel,
+                    }
+                )
+        return tracks
+
+    def __getitem__(self, index: int):
+        del index
+        track = random.choice(self._tracks)
+        paths = track["paths"]
+        i, j, gap = self._sample_positive_indices(track)
+
+        neg_track = track
+        for _ in range(50):
+            cand = random.choice(self._tracks)
+            if (
+                cand["video_id"] != track["video_id"]
+                or cand["particle_id"] != track["particle_id"]
+            ):
+                neg_track = cand
+                break
+
+        neg_path = random.choice(neg_track["paths"])
+
+        def load_tensor(path: Path):
+            im = Image.open(path).convert("RGB")
+            return self.transform(im)
+
+        return (
+            load_tensor(paths[i]),
+            load_tensor(paths[j]),
+            load_tensor(neg_path),
+            int(gap),
+            int(track["max_gap"]),
+        )
 
 class CSAWM(Dataset):
     def __init__(self, root, split, transform=None, target_transform=None, loss_type="one_hot"):
@@ -259,6 +560,11 @@ def get_data_loaders(
         valset = CSAWM(root, "val", transform=test_transform, loss_type="multi_hot")
         trainvalset = CSAWM(root, "trainval", transform=train_transform, loss_type="multi_hot")
         testset = CSAWM(root, "test", transform=test_transform, loss_type="multi_hot")
+    elif dataset == "particle":
+        trainset = ParticlePatchPairDataset(root + "/" + dataset, "train")
+        valset = ParticlePatchPairDataset(root + "/" + dataset, "val")
+        # did not inlcude trainval set
+        testset = ParticlePatchPairDataset(root + "/" + dataset, "test")
     elif dataset in unseen_datasets:
         trainset = UnseenDataset(
             root, dataset, split="train", transform=None, image_size=image_size

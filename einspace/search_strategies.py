@@ -95,7 +95,7 @@ class Individual(object):
 
     def __repr__(self):
         """Prints a readable version of this bitstring."""
-        return f"Individual(accuracy={self.accuracy}, age={self.age}, feature_shape={self.feature_shape}, num_parameters={millify(self.num_parameters)}, num_terminals={self.num_terminals}, num_nonterminals={self.num_nonterminals}, average_branching_factor={self.average_branching_factor}, hpo_dict={self.hpo_dict})"
+        return f"Individual(accuracy(loss for triplets)={self.accuracy}, age={self.age}, feature_shape={self.feature_shape}, num_parameters={millify(self.num_parameters)}, num_terminals={self.num_terminals}, num_nonterminals={self.num_nonterminals}, average_branching_factor={self.average_branching_factor}, hpo_dict={self.hpo_dict})"
 
 
 class Population(deque):
