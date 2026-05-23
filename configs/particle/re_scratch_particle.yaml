@@ -19,6 +19,7 @@ hpo_runs: 1
 lr: 0.04
 momentum: 0.9
 weight_decay: 0.0003
+triplet_margin: 0.3
 
 search_space_computation_module_prob: 0.32
 search_space_min_module_depth: 0

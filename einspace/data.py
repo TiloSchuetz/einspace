@@ -159,7 +159,7 @@ class ParticlePatchPairDataset(Dataset):
 
             self._tracks.append(
                 {
-                    "paths": [self.split_dir / rel for rel in track["paths_rel"]],
+                    "paths_rel": [str(rel).replace("\\", "/") for rel in track["paths_rel"]],
                     "frames": frame_ids,
                     "video_id": video_id,
                     "particle_id": particle_id,
@@ -322,7 +322,7 @@ class ParticlePatchPairDataset(Dataset):
     def __getitem__(self, index: int):
         del index
         track = random.choice(self._tracks)
-        paths = track["paths"]
+        paths_rel = track["paths_rel"]
         i, j, gap = self._sample_positive_indices(track)
 
         neg_track = track
@@ -335,16 +335,17 @@ class ParticlePatchPairDataset(Dataset):
                 neg_track = cand
                 break
 
-        neg_path = random.choice(neg_track["paths"])
+        neg_rel = random.choice(neg_track["paths_rel"])
 
-        def load_tensor(path: Path):
-            im = Image.open(path).convert("RGB")
+        def load_rel(rel: str):
+            p = self.split_dir / rel.replace("\\", "/")
+            im = Image.open(p).convert("RGB")
             return self.transform(im)
 
         return (
-            load_tensor(paths[i]),
-            load_tensor(paths[j]),
-            load_tensor(neg_path),
+            load_rel(paths_rel[i]),
+            load_rel(paths_rel[j]),
+            load_rel(neg_rel),
             int(gap),
             int(track["max_gap"]),
         )

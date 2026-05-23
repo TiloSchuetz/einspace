@@ -17,6 +17,7 @@ from einspace.data_utils.fsd50k import calculate_map
 from einspace.data_utils.ecg import f1_score_ecg
 from einspace.data_utils.deepsea import calculate_auroc
 from einspace.data_utils.cosmic import CosmicBCEWithLogitsLoss, CosmicMetricFunction
+from evaluation import evaluate_positive_pair_retrieval
 
 
 class Trainer:
@@ -69,7 +70,9 @@ class Trainer:
             "cosmic": CosmicBCEWithLogitsLoss(),
             "ecg": nn.CrossEntropyLoss(),
             "deepsea": nn.BCEWithLogitsLoss(),
-            "triplet": nn.TripletMarginWithDistanceLoss(distance_function=lambda x, y: 1 - nn.CosineSimilarity()(x, y)),
+            "triplet": nn.TripletMarginWithDistanceLoss(distance_function=lambda x, y: 1 - nn.CosineSimilarity()(x, y),
+                                                        margin=config["triplet_margin"],
+                                                        ),
         }[self.score]
         self.score_fn = {
             "xe": lambda x, y: accuracy_score(x, y) * 100.0,
@@ -219,7 +222,7 @@ class Trainer:
 
                     valid_score = 0.
                     if self.score == "triplet":
-                        valid_score = loss.item() #TODO decide which evaluation strategy to use
+                        valid_score = self.evaluate(model, "val")
                     elif self.valid_dataloader is not None:
                         # fsd50k evaluation is super slow. Only do it at the end
                         if self.config["dataset"] == "fsd50k":
@@ -287,14 +290,29 @@ class Trainer:
             total_loss = 0.0
             count = 0
             with torch.no_grad():
-                for anchor, positive, negative, gap, max_gap in dataloader:
+                retrieval_result = evaluate_positive_pair_retrieval(
+                    model = model,
+                    dataset = dataloader.dataset,
+                    num_pairs = 5000,
+                    batch_size = self.config["batch_size"],
+                    device = self.device,
+                    seed = 42,
+                    metrics = ["top1"],
+                    #kendall_num_queries = retrieval_eval_kendall_queries,
+                    #kendall_num_candidates = retrieval_eval_kendall_candidates,
+                    group_size = 10,
+                    #retrieval_chunk_size = retrieval_eval_chunk_size,
+                )
+                rr = retrieval_result.as_dict()
+                return rr["top1_acc"]
+                """ for anchor, positive, negative, gap, max_gap in dataloader:
                     anchor = anchor.to(self.device)
                     positive = positive.to(self.device)
                     negative = negative.to(self.device)
                     loss = self.criterion(model(anchor), model(positive), model(negative))
                     total_loss += loss.item()
                     count += 1
-            return total_loss / max(count, 1)
+            return total_loss / max(count, 1) """
         
         if self.config["dataset"] == "fsd50k":
             print("Evaluating fsd50k")
