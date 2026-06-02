@@ -103,6 +103,7 @@ class Trainer:
             "model": deepcopy(self.model),
             "train_score": 0,
             "val_score": self.val_score_at_init,
+            "val_loss": None,
             "lr": None,
             "momentum": None,
             "weight_decay": None,
@@ -221,8 +222,21 @@ class Trainer:
                     scheduler.step()
 
                     valid_score = 0.
+                    valid_loss = None
                     if self.score == "triplet":
                         valid_score = self.evaluate(model, "val")
+                        if self.valid_dataloader is not None:
+                            model.eval()
+                            vl_total, vl_count = 0.0, 0
+                            with torch.no_grad():
+                                for vbatch in self.valid_dataloader:
+                                    va, vp, vn, _, _ = vbatch
+                                    if not self.config["load_in_gpu"]:
+                                        va, vp, vn = va.to(self.device), vp.to(self.device), vn.to(self.device)
+                                    vl_total += self.criterion(model(va), model(vp), model(vn)).item()
+                                    vl_count += 1
+                            valid_loss = vl_total / max(vl_count, 1)
+                            model.train()
                     elif self.valid_dataloader is not None:
                         # fsd50k evaluation is super slow. Only do it at the end
                         if self.config["dataset"] == "fsd50k":
@@ -245,14 +259,16 @@ class Trainer:
                         raise Exception("No validation or test set provided")
 
                     if self.log:
+                        val_loss_str = f" | Valid Loss: {valid_loss:>6.4f}" if valid_loss is not None else ""
                         print(
-                            "\tEpoch {:>3}/{:<3} | Train Loss: {:>6.2f} | Valid Score: {:>6.2f} | Epoch Time: {:>6}s".format(
+                            ("\tEpoch {:>3}/{:<3} | Train Loss: {:>6.2f}{} | Valid Score: {:>6.2f} | Epoch Time: {:>6}s".format(
                                 epoch,
                                 self.epochs,
                                 loss.item(),
+                                val_loss_str,
                                 valid_score,
                                 int(time() - epoch_start),
-                            ),
+                            )),
                             flush=True,
                         )
                 except ValueError as e:
@@ -272,6 +288,20 @@ class Trainer:
                 self.best["epoch"] = epoch
                 self.best["duration"] = int(time() - train_start)
             print(f"Training time: {int(time() - train_start)}s", flush=True)
+        if self.score == "triplet" and self.valid_dataloader is not None:
+            best_m = self.best["model"]
+            best_m.eval()
+            total_loss, count = 0.0, 0
+            with torch.no_grad():
+                for batch in self.valid_dataloader:
+                    anchor, positive, negative, gap, max_gap = batch
+                    if not self.config["load_in_gpu"]:
+                        anchor = anchor.to(self.device)
+                        positive = positive.to(self.device)
+                        negative = negative.to(self.device)
+                    total_loss += self.criterion(best_m(anchor), best_m(positive), best_m(negative)).item()
+                    count += 1
+            self.best["val_loss"] = total_loss / max(count, 1)
         return self.best
 
     # print out the model's accuracy over the valid dataset

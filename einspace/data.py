@@ -101,7 +101,7 @@ class ParticlePatchPairDataset(Dataset):
         length: int = 65536,
         image_size: ImageSize = 32,
         min_gap: int = 1,
-        max_gap: float = float("inf"),
+        max_gap: float = 3.0, #float("inf"), Tilo: align with Steffen's setup
         force_rebuild_cache: bool = False,
         transform: Optional[Callable] = None,
     ):
@@ -794,7 +794,7 @@ def get_data_loaders(
             print(f"\t{e}")
 
     pin_memory = not load_in_gpu
-    num_workers = 0 if load_in_gpu else 4
+    num_workers = 0 if load_in_gpu else 12 #Tilo align with Steffen's setup
     train_loader = DataLoader(
         trainset,
         batch_size=batch_size,

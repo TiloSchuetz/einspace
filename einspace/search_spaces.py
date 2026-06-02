@@ -1954,10 +1954,16 @@ class EinSpace:
                     )
                     # try to compile the new architecture
                     modules = compiler.compile(new_architecture_dict)
-                    out = modules(
+                    """ out = modules(
                         torch.randn(new_architecture_dict["input_shape"])
-                    )
-
+                    ) """ # Tilo: this change should prevent the RAM OOM kills.
+                    # No autograd graph is build during the check for valid architecture
+                    with torch.no_grad():
+                        out = modules(
+                            torch.randn(new_architecture_dict["input_shape"])
+                        )
+                    del out
+                    torch.cuda.empty_cache()
                     # check whether the architecture contains too many parameters
                     num_predicted_params = predict_num_parameters(
                         new_architecture_dict

@@ -48,6 +48,7 @@ class Individual(object):
         self.hpo_dict = hpo_dict
 
         self.alive = True
+        self.val_loss = None
 
         self.feature_shape = arch["output_shape"]
         self.num_parameters = sum([p.numel() for p in modules.parameters()])
@@ -95,7 +96,8 @@ class Individual(object):
 
     def __repr__(self):
         """Prints a readable version of this bitstring."""
-        return f"Individual(accuracy(loss for triplets)={self.accuracy}, age={self.age}, feature_shape={self.feature_shape}, num_parameters={millify(self.num_parameters)}, num_terminals={self.num_terminals}, num_nonterminals={self.num_nonterminals}, average_branching_factor={self.average_branching_factor}, hpo_dict={self.hpo_dict})"
+        val_loss_str = f", val_loss={self.val_loss:.4f}" if self.val_loss is not None else ""
+        return f"Individual(accuracy(loss for triplets)={self.accuracy}{val_loss_str}, age={self.age}, feature_shape={self.feature_shape}, num_parameters={millify(self.num_parameters)}, num_terminals={self.num_terminals}, num_nonterminals={self.num_nonterminals}, average_branching_factor={self.average_branching_factor}, hpo_dict={self.hpo_dict})"
 
 
 class Population(deque):
@@ -209,6 +211,7 @@ class RandomSearch:
         best_model = self.evaluation_fn(architecture, modules)
         individual = Individual(id, parent_id, architecture, modules)
         individual.accuracy = best_model["val_score"]
+        individual.val_loss = best_model.get("val_loss")
         individual.duration = best_model["duration"]
         if "lr" in best_model:
             individual.hpo_dict = {
@@ -333,6 +336,7 @@ class RegularisedEvolution:
         best_model = self.evaluation_fn(architecture, modules)
         individual = Individual(id, parent_id, architecture, modules)
         individual.accuracy = best_model["val_score"]
+        individual.val_loss = best_model.get("val_loss")
         individual.duration = best_model["duration"]
         individual.hpo_dict = {
             key: best_model[key]
@@ -450,8 +454,12 @@ class RegularisedEvolution:
                 open(join("results", self.save_name + ".pkl"), "wb"),
             )
             # track memory usage
-            memory_usage = psutil.virtual_memory()
-            print(f"Memory Usage: {memory_usage.percent}%", flush=True)
+            vm = psutil.virtual_memory()
+            ram_used = (vm.total - vm.available) / 1024**3
+            ram_total = vm.total / 1024**3
+            vram_alloc = torch.cuda.memory_allocated() / 1024**3
+            vram_reserved = torch.cuda.memory_reserved() / 1024**3
+            print(f"RAM: {ram_used:.1f}/{ram_total:.0f} GB used | VRAM: {vram_alloc:.1f} GB allocated, {vram_reserved:.1f} GB reserved", flush=True)
 
         # Carry out evolution in cycles. Each cycle produces a model and removes
         # another.
@@ -479,8 +487,12 @@ class RegularisedEvolution:
                 open(join("results", self.save_name + ".pkl"), "wb"),
             )
             # track memory usage
-            memory_usage = psutil.virtual_memory()
-            print(f"Memory Usage: {memory_usage.percent}%", flush=True)
+            vm = psutil.virtual_memory()
+            ram_used = (vm.total - vm.available) / 1024**3
+            ram_total = vm.total / 1024**3
+            vram_alloc = torch.cuda.memory_allocated() / 1024**3
+            vram_reserved = torch.cuda.memory_reserved() / 1024**3
+            print(f"RAM: {ram_used:.1f}/{ram_total:.0f} GB used | VRAM: {vram_alloc:.1f} GB allocated, {vram_reserved:.1f} GB reserved", flush=True)
 
         return self.history
 
