@@ -2482,6 +2482,52 @@ einspace_mlp_mixer_architecture_dict = OrderedDict(
     }
 )
 
+einspace_patchconvnet_architecture_dict = OrderedDict(
+    {
+        "fn": sequential_module,
+        "children": OrderedDict(
+            {
+                "first_fn": OrderedDict(
+                    {
+                        "fn": sequential_module,
+                        "children": OrderedDict(
+                            {
+                                "first_fn": einspace_conv3x3_architecture_dict(linear32),
+                                "second_fn": OrderedDict(
+                                    {
+                                        "fn": computation_module,
+                                        "children": OrderedDict(
+                                            {"computation_fn": leakyrelu}
+                                        ),
+                                    }
+                                ),
+                            }
+                        ),
+                    }
+                ),
+                "second_fn": OrderedDict(
+                    {
+                        "fn": sequential_module,
+                        "children": OrderedDict(
+                            {
+                                "first_fn": einspace_conv3x3_architecture_dict(linear32),
+                                "second_fn": OrderedDict(
+                                    {
+                                        "fn": computation_module,
+                                        "children": OrderedDict(
+                                            {"computation_fn": leakyrelu}
+                                        ),
+                                    }
+                                ),
+                            }
+                        ),
+                    }
+                ),
+            }
+        ),
+    }
+)
+
 # WideResNet(
 # (conv1): Conv2d(3, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
 # (block1): NetworkBlock(
@@ -2565,4 +2611,5 @@ seed_architectures = {
         linear64,
         linear64,
     ),
+    "patchconvnet": einspace_patchconvnet_architecture_dict,
 }
