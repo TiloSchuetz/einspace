@@ -224,7 +224,7 @@ class Trainer:
                     valid_score = 0.
                     valid_loss = None
                     if self.score == "triplet":
-                        valid_score = self.evaluate(model, "test")
+                        valid_score = self.evaluate(model, "val")
                         if self.valid_dataloader is not None:
                             model.eval()
                             vl_total, vl_count = 0.0, 0
