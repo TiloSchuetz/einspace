@@ -261,7 +261,7 @@ class Trainer:
                     if self.log:
                         val_loss_str = f" | Valid Loss: {valid_loss:>6.4f}" if valid_loss is not None else ""
                         print(
-                            ("\tEpoch {:>3}/{:<3} | Train Loss: {:>6.2f}{} | Valid Score: {:>6.2f} | Epoch Time: {:>6}s".format(
+                            ("\tEpoch {:>3}/{:<3} | Train Loss: {:>8.4f}{} | Valid Score: {:>6.2f} | Epoch Time: {:>6}s".format(
                                 epoch,
                                 self.epochs,
                                 loss.item(),
