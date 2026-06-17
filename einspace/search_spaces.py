@@ -1193,7 +1193,7 @@ class EinSpace:
                 *list(outputs)[0].shape[1:],
             ]
         # computation functions
-        elif fn in [norm, leakyrelu, softmax, identity]:
+        elif fn in [norm, leakyrelu, softmax, identity, gelu]:
             return [
                 input_shape[0],
                 *fn(**{"input_shape": input_shape})
@@ -1314,6 +1314,7 @@ class EinSpace:
             "group_dim" in fn.__name__
             or "norm" in fn.__name__
             or "leakyrelu" in fn.__name__
+            or "gelu" in fn.__name__
             or "softmax" in fn.__name__
             or "identity" in fn.__name__
             or "clone_tensor" in fn.__name__

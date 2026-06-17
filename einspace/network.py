@@ -24,10 +24,13 @@ class Network(nn.Module):
             embedding_dim = output_shape  # num_classes in config = embedding dim
             if len(backbone_output_shape) == 2: # [batch, features]
                 self.head = nn.Linear(backbone_output_shape[1], embedding_dim)
+            # some explanation: for the standard implemenentation pool oder dimensions and not over tokens
+            # what we want is to pool over tokens -> output vector with same length as token has embeddings dims
+            # done like this below
             elif len(backbone_output_shape) == 3: # [batch, sequence, features]
                 self.head = nn.Sequential(
-                    Reduce("b s d -> b s", "mean"),
-                    nn.Linear(backbone_output_shape[1], embedding_dim),
+                    Reduce("b s d -> b d", "mean"),
+                    nn.Linear(backbone_output_shape[2], embedding_dim),
                 )
             elif len(backbone_output_shape) == 4: # [batch, channels, height, width]
                 self.head = nn.Sequential(

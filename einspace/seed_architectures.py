@@ -2528,6 +2528,325 @@ einspace_patchconvnet_architecture_dict = OrderedDict(
     }
 )
 
+einspace_sdpa_dim16_architecture_dict = OrderedDict(
+    {
+        "fn": branching_module,
+        "children": OrderedDict(
+            {
+                "branching_fn": OrderedDict({"fn": clone_tensor2}),
+                "inner_fn": [
+                    OrderedDict(
+                        {
+                            "fn": sequential_module,
+                            "children": OrderedDict(
+                                {
+                                    "first_fn": OrderedDict(
+                                        {
+                                            "fn": branching_module,
+                                            "children": OrderedDict(
+                                                {
+                                                    "branching_fn": OrderedDict(
+                                                        {"fn": clone_tensor2}
+                                                    ),
+                                                    "inner_fn": [
+                                                        OrderedDict(
+                                                            {
+                                                                "fn": computation_module,
+                                                                "children": OrderedDict(
+                                                                    {
+                                                                        "computation_fn": linear16
+                                                                    }
+                                                                ),
+                                                            }
+                                                        ),
+                                                        OrderedDict(
+                                                            {
+                                                                "fn": routing_module,
+                                                                "children": OrderedDict(
+                                                                    {
+                                                                        "prerouting_fn": OrderedDict(
+                                                                            {
+                                                                                "fn": identity
+                                                                            }
+                                                                        ),
+                                                                        "inner_fn": OrderedDict(
+                                                                            {
+                                                                                "fn": computation_module,
+                                                                                "children": OrderedDict(
+                                                                                    {
+                                                                                        "computation_fn": linear16
+                                                                                    }
+                                                                                ),
+                                                                            }
+                                                                        ),
+                                                                        "postrouting_fn": OrderedDict(
+                                                                            {
+                                                                                "fn": permute21
+                                                                            }
+                                                                        ),
+                                                                    }
+                                                                ),
+                                                            }
+                                                        ),
+                                                    ],
+                                                    "aggregation_fn": OrderedDict(
+                                                        {
+                                                            "fn": scaled_dot_product
+                                                        }
+                                                    ),
+                                                }
+                                            ),
+                                        }
+                                    ),
+                                    "second_fn": OrderedDict(
+                                        {
+                                            "fn": computation_module,
+                                            "children": OrderedDict(
+                                                {"computation_fn": softmax}
+                                            ),
+                                        }
+                                    ),
+                                }
+                            ),
+                        }
+                    ),
+                    OrderedDict(
+                        {
+                            "fn": computation_module,
+                            "children": OrderedDict(
+                                {"computation_fn": linear16}
+                            ),
+                        }
+                    ),
+                ],
+                "aggregation_fn": OrderedDict({"fn": dot_product}),
+            }
+        ),
+    }
+)
+
+# multi head self-attention with 2 heads
+einspace_mhsa_h2_architecture_dict = OrderedDict(
+    {
+        "fn": sequential_module,
+        "children": OrderedDict(
+            {
+                "first_fn": OrderedDict(
+                    {
+                        "fn": branching_module,
+                        "children": OrderedDict(
+                            {
+                                "branching_fn": OrderedDict(
+                                    {"fn": clone_tensor2}
+                                ),
+                                "inner_fn": [
+                                    einspace_sdpa_dim16_architecture_dict,
+                                    einspace_sdpa_dim16_architecture_dict,
+                                ],
+                                "aggregation_fn": OrderedDict(
+                                    {"fn": cat_tensors2d2t} # 2 heads concatenated with dim 16 give dim 32
+                                ),
+                            }
+                        ),
+                    }
+                ),
+                "second_fn": OrderedDict(
+                    {
+                        "fn": computation_module,
+                        "children": OrderedDict({"computation_fn": linear32}),
+                    }
+                ),
+            }
+        ),
+    }
+)
+
+einspace_ffn_d32_architecture_dict = OrderedDict(
+    {
+        "fn": sequential_module,
+        "children": OrderedDict(
+            {
+                "first_fn": OrderedDict(
+                    {
+                        "fn": sequential_module,
+                        "children": OrderedDict(
+                            {
+                                "first_fn": OrderedDict(
+                                    {
+                                        "fn": computation_module,
+                                        "children": OrderedDict(
+                                            {"computation_fn": linear64}
+                                        ),
+                                    }
+                                ),
+                                "second_fn": OrderedDict(
+                                    {
+                                        "fn": computation_module,
+                                        "children": OrderedDict(
+                                            {"computation_fn": gelu}
+                                        ),
+                                    }
+                                ),
+                            }
+                        ),
+                    }
+                ),
+                "second_fn": OrderedDict({"fn": linear32}),
+            }
+        ),
+    }
+)
+
+# transformer layer with 2 heads, based on einspace_mhsa_h2_architecture_dict
+einspace_transformer_layer_2h_architecture_dict = OrderedDict(
+    {
+        "fn": sequential_module,
+        "children": OrderedDict(
+            {
+                "first_fn": OrderedDict(
+                    {
+                        "fn": branching_module,
+                        "children": OrderedDict(
+                            {
+                                "branching_fn": OrderedDict(
+                                    {"fn": clone_tensor2}
+                                ),
+                                "inner_fn":[
+                                    OrderedDict(
+                                        {
+                                        "fn": sequential_module,
+                                            "children": OrderedDict(
+                                                {
+                                                    "first_fn": OrderedDict({"fn": norm}),
+                                                    "second_fn": einspace_mhsa_h2_architecture_dict
+                                                }
+                                            )
+                                        }
+                                    ),
+                                    OrderedDict(
+                                        {
+                                            "fn": computation_module,
+                                            "children": OrderedDict(
+                                                {
+                                                    "computation_fn": identity
+                                                }
+                                            ),
+                                        }
+                                    ),
+                                ],
+                                "aggregation_fn": OrderedDict(
+                                    {"fn": add_tensors}
+                                ),
+                            }
+                        )
+                    },
+                ),
+                "second_fn": OrderedDict(
+                    {
+                        "fn": branching_module,
+                        "children": OrderedDict(
+                            {
+                                "branching_fn": OrderedDict(
+                                    {"fn": clone_tensor2}
+                                ),
+                                "inner_fn":[
+                                    OrderedDict(
+                                        {
+                                        "fn": sequential_module,
+                                            "children": OrderedDict(
+                                                {
+                                                    "first_fn": OrderedDict({"fn": norm}),
+                                                    "second_fn": einspace_ffn_d32_architecture_dict
+                                                }
+                                            )
+                                        }
+                                    ),
+                                    OrderedDict(
+                                        {
+                                            "fn": computation_module,
+                                            "children": OrderedDict(
+                                                {
+                                                    "computation_fn": identity
+                                                }
+                                            ),
+                                        }
+                                    ),
+                                ],
+                                "aggregation_fn": OrderedDict(
+                                    {"fn": add_tensors}
+                                ),
+                            }
+                        )
+                    },
+                ),
+            }
+        ),
+    }
+)
+
+einspace_simple_vit_architecture_dict = OrderedDict(
+    {
+        "fn": sequential_module,
+        "children": OrderedDict(
+            {
+                "first_fn": OrderedDict(
+                    {
+                        "fn": sequential_module,
+                        "children": OrderedDict(
+                            {
+                                "first_fn": OrderedDict(
+                                    {
+                                        "fn": routing_module,
+                                        "children": OrderedDict(
+                                            {
+                                                "prerouting_fn": OrderedDict(
+                                                    {"fn": im2col4k4s0p}
+                                                ),
+                                                "inner_fn": OrderedDict(
+                                                    {
+                                                        "fn": computation_module,
+                                                        "children": OrderedDict(
+                                                            {
+                                                                "computation_fn": linear32 # embedding dimension of 32
+                                                            }
+                                                        ),
+                                                    }
+                                                ),
+                                                "postrouting_fn": OrderedDict(
+                                                    {"fn": identity}
+                                                ),
+                                            }
+                                        ),
+                                    }
+                                ),
+                                "second_fn": OrderedDict(
+                                    {
+                                        "fn": computation_module,
+                                        "children": OrderedDict(
+                                            {"computation_fn": learnable_positional_encoding}
+                                        ),
+                                    }
+                                ),
+                            }
+                        ),
+                    }
+                ),
+                "second_fn": OrderedDict(
+                    {
+                        "fn": sequential_module,
+                        "children": OrderedDict(
+                            {
+                                "first_fn": einspace_transformer_layer_2h_architecture_dict, # 2 times transfomer layer with 2 heads
+                                "second_fn": einspace_transformer_layer_2h_architecture_dict,
+                            }
+                        ),
+                    }
+                ),
+            }
+        ),
+    }
+)
+
 # WideResNet(
 # (conv1): Conv2d(3, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
 # (block1): NetworkBlock(
@@ -2612,4 +2931,5 @@ seed_architectures = {
         linear64,
     ),
     "patchconvnet": einspace_patchconvnet_architecture_dict,
+    "simple_vit": einspace_simple_vit_architecture_dict
 }

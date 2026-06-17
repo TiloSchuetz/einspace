@@ -1100,6 +1100,8 @@ def norm(**kwargs):
 def leakyrelu(**kwargs):
     return nn.LeakyReLU()
 
+def gelu(**kwargs):
+    return nn.GELU()
 
 def softmax(**kwargs):
     return nn.Softmax(dim=-1)
